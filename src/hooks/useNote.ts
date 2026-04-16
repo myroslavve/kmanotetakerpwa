@@ -4,6 +4,7 @@ interface NoteData {
   id: string;
   title: string;
   content: string;
+  reminderAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -11,11 +12,13 @@ interface NoteData {
 interface PendingNoteUpdate {
   title: string;
   content: string;
+  reminderAt: string | null;
   updatedAt: string;
 }
 
 const NOTE_CACHE_KEY = 'note-cache-v1';
 const NOTE_PENDING_UPDATES_KEY = 'note-pending-updates-v1';
+const NOTE_REMINDER_FIRED_KEY = 'note-reminder-fired-v1';
 
 function readJsonRecord<T>(key: string): Record<string, T> {
   try {
@@ -63,6 +66,27 @@ function clearPendingUpdate(noteId: string) {
   writeJsonRecord(NOTE_PENDING_UPDATES_KEY, pending);
 }
 
+function hasReminderFired(noteId: string, reminderAt: string) {
+  const fired = readJsonRecord<boolean>(NOTE_REMINDER_FIRED_KEY);
+  return Boolean(fired[`${noteId}|${reminderAt}`]);
+}
+
+function markReminderFired(noteId: string, reminderAt: string) {
+  const fired = readJsonRecord<boolean>(NOTE_REMINDER_FIRED_KEY);
+  fired[`${noteId}|${reminderAt}`] = true;
+  writeJsonRecord(NOTE_REMINDER_FIRED_KEY, fired);
+}
+
+function clearReminderFiredForNote(noteId: string) {
+  const fired = readJsonRecord<boolean>(NOTE_REMINDER_FIRED_KEY);
+  for (const key of Object.keys(fired)) {
+    if (key.startsWith(`${noteId}|`)) {
+      delete fired[key];
+    }
+  }
+  writeJsonRecord(NOTE_REMINDER_FIRED_KEY, fired);
+}
+
 export const useNote = (noteId: string | undefined, token: string | null) => {
   const [note, setNote] = useState<NoteData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -93,6 +117,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
         body: JSON.stringify({
           title: pending.title,
           content: pending.content,
+          reminderAt: pending.reminderAt,
         }),
       });
 
@@ -141,6 +166,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
           ...serverNote,
           title: pending.title,
           content: pending.content,
+          reminderAt: pending.reminderAt,
           updatedAt: pending.updatedAt,
         };
         setNote(merged);
@@ -175,6 +201,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
         setPendingUpdate(noteId, {
           title: updatedNote.title,
           content: updatedNote.content,
+          reminderAt: updatedNote.reminderAt,
           updatedAt: updatedNote.updatedAt,
         });
         setHasPendingSync(true);
@@ -196,6 +223,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
           body: JSON.stringify({
             title: updatedNote.title,
             content: updatedNote.content,
+            reminderAt: updatedNote.reminderAt,
           }),
         });
 
@@ -210,7 +238,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
         clearPendingUpdate(noteId);
         setHasPendingSync(false);
         setError('');
-      } catch (err) {
+      } catch {
         queueOfflineSave();
         setError('You are offline. Changes will sync when connection returns.');
       } finally {
@@ -268,6 +296,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
       }
 
       clearPendingUpdate(noteId);
+      clearReminderFiredForNote(noteId);
 
       return true;
     } catch (err) {
@@ -293,6 +322,90 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
     }
   }, [flushPendingUpdate]);
 
+  const showReminderNotification = useCallback(async () => {
+    if (!note || !note.reminderAt) {
+      return;
+    }
+
+    if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+      return;
+    }
+
+    if (Notification.permission === 'default') {
+      await Notification.requestPermission();
+    }
+
+    if (Notification.permission !== 'granted') {
+      return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification('Note reminder', {
+      body: note.title || 'You have a note reminder',
+      tag: `note-reminder-${note.id}`,
+      data: { url: `/note/${note.id}` },
+    });
+  }, [note]);
+
+  useEffect(() => {
+    if (!note || !note.reminderAt) {
+      return;
+    }
+
+    const reminderTime = Date.parse(note.reminderAt);
+    if (Number.isNaN(reminderTime)) {
+      return;
+    }
+
+    const checkReminder = async () => {
+      if (!note?.reminderAt) {
+        return;
+      }
+
+      if (Date.now() < reminderTime) {
+        return;
+      }
+
+      if (hasReminderFired(note.id, note.reminderAt)) {
+        return;
+      }
+
+      await showReminderNotification();
+      markReminderFired(note.id, note.reminderAt);
+    };
+
+    checkReminder();
+    const interval = setInterval(checkReminder, 30000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [note, showReminderNotification]);
+
+  const updateReminderAt = useCallback(
+    (reminderAt: string | null) => {
+      if (!note) return;
+
+      const updatedNote = {
+        ...note,
+        reminderAt,
+        updatedAt: new Date().toISOString(),
+      };
+
+      clearReminderFiredForNote(note.id);
+      setNote(updatedNote);
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+
+      saveTimeoutRef.current = setTimeout(() => {
+        saveNote(updatedNote);
+      }, 1000);
+    },
+    [note, saveNote],
+  );
+
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) {
@@ -310,6 +423,7 @@ export const useNote = (noteId: string | undefined, token: string | null) => {
     fetchNote,
     updateTitle,
     updateContent,
+    updateReminderAt,
     deleteNote,
   };
 };

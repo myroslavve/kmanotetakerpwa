@@ -4,6 +4,7 @@ interface Note {
   id: string;
   title: string;
   content: string;
+  reminderAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -44,7 +45,11 @@ export const useNotes = (token: string | null) => {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title: 'Untitled', content: '' }),
+        body: JSON.stringify({
+          title: 'Untitled',
+          content: '',
+          reminderAt: null,
+        }),
       });
 
       if (!res.ok) {

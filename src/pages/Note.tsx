@@ -5,6 +5,22 @@ import { useNote } from '../hooks/useNote';
 import Content from '../components/Content';
 import Title from '../components/Title';
 
+function toLocalDateTimeInputValue(isoDate: string | null | undefined) {
+  if (!isoDate) {
+    return '';
+  }
+
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 const Note = () => {
   const { id } = useParams<{ id: string }>();
   const { token } = useAuth();
@@ -18,6 +34,7 @@ const Note = () => {
     fetchNote,
     updateTitle,
     updateContent,
+    updateReminderAt,
     deleteNote,
   } = useNote(id, token);
 
@@ -107,6 +124,35 @@ const Note = () => {
             </div>
           </div>
           <Title title={note.title} onChange={updateTitle} />
+          <div className='mb-4 flex items-center gap-3'>
+            <label
+              htmlFor='reminderAt'
+              className='text-sm font-medium text-slate-700'
+            >
+              Reminder
+            </label>
+            <input
+              id='reminderAt'
+              type='datetime-local'
+              value={toLocalDateTimeInputValue(note.reminderAt)}
+              onChange={(e) => {
+                const nextValue = e.target.value;
+                updateReminderAt(
+                  nextValue ? new Date(nextValue).toISOString() : null,
+                );
+              }}
+              className='rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500'
+            />
+            {note.reminderAt && (
+              <button
+                type='button'
+                onClick={() => updateReminderAt(null)}
+                className='text-sm text-slate-600 hover:text-slate-800'
+              >
+                Clear
+              </button>
+            )}
+          </div>
           <Content content={note.content} onChange={updateContent} />
         </div>
       </div>

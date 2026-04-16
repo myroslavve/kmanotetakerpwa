@@ -87,6 +87,19 @@ function createToken(user) {
   });
 }
 
+function normalizeReminderAt(reminderAt) {
+  if (reminderAt == null || reminderAt === '') {
+    return null;
+  }
+
+  const date = new Date(reminderAt);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return date.toISOString();
+}
+
 function authRequired(req, res, next) {
   const auth = req.headers.authorization ?? '';
   const [scheme, token] = auth.split(' ');
@@ -212,6 +225,11 @@ app.post('/api/notes', authRequired, async (req, res) => {
   try {
     const title = String(req.body?.title ?? '').trim();
     const content = String(req.body?.content ?? '').trim();
+    const reminderAt = normalizeReminderAt(req.body?.reminderAt);
+
+    if (reminderAt === undefined) {
+      return res.status(400).json({ message: 'Invalid reminder time' });
+    }
 
     if (!title && !content) {
       return res
@@ -225,6 +243,7 @@ app.post('/api/notes', authRequired, async (req, res) => {
       userId: req.userId,
       title,
       content,
+      reminderAt,
       createdAt: now,
       updatedAt: now,
     };
@@ -246,8 +265,19 @@ app.put('/api/notes/:id', authRequired, async (req, res) => {
     const noteId = String(req.params.id);
     const title = req.body?.title;
     const content = req.body?.content;
+    const hasReminderAt = Object.prototype.hasOwnProperty.call(
+      req.body ?? {},
+      'reminderAt',
+    );
+    const reminderAt = hasReminderAt
+      ? normalizeReminderAt(req.body?.reminderAt)
+      : null;
 
-    if (title == null && content == null) {
+    if (reminderAt === undefined) {
+      return res.status(400).json({ message: 'Invalid reminder time' });
+    }
+
+    if (title == null && content == null && !hasReminderAt) {
       return res.status(400).json({ message: 'Nothing to update' });
     }
 
@@ -266,6 +296,10 @@ app.put('/api/notes/:id', authRequired, async (req, res) => {
 
       if (content != null) {
         note.content = String(content).trim();
+      }
+
+      if (hasReminderAt) {
+        note.reminderAt = reminderAt;
       }
 
       note.updatedAt = new Date().toISOString();
